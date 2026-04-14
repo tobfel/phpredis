@@ -286,6 +286,7 @@ jobs:
         with:
           arch: x64
           php-version: ${{ matrix.php }}
+          args: --enable-redis-lzf --enable-redis-zstd --enable-redis-igbinary --enable-redis-msgpack --enable-redis-lz4 --with-liblz4
           ts: ${{ matrix.ts }}
           run-tests: false
 
