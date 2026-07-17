@@ -90,7 +90,7 @@ jobs:
           tools: none
       - name: Install system dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update --allow-releaseinfo-change-label
           sudo apt-get install valgrind libzstd-dev liblz4-dev libssl-dev
 
       - name: Install Redis
@@ -103,7 +103,7 @@ jobs:
                sudo tee /etc/apt/sources.list.d/redis.list
           curl -fsSL "https://$REDIS_PPA_KEY" | \
                sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/redis.gpg
-          sudo apt-get update
+          sudo apt-get update --allow-releaseinfo-change-label
           sudo apt-get install redis
 
       - name: Install KeyDB
@@ -115,7 +115,7 @@ jobs:
           echo "deb https://$KEYDB_PPA_URI $(lsb_release -sc) main" | \
                sudo tee /etc/apt/sources.list.d/keydb.list
           sudo wget -O /etc/apt/trusted.gpg.d/keydb.gpg "https://$KEYDB_PPA_KEY"
-          sudo apt-get update
+          sudo apt-get update --allow-releaseinfo-change-label
           sudo apt-get install keydb
 
       - name: Install ValKey
@@ -289,6 +289,11 @@ jobs:
           args: --enable-redis-lzf --enable-redis-zstd --enable-redis-igbinary --enable-redis-msgpack --enable-redis-lz4 --with-liblz4
           ts: ${{ matrix.ts }}
           run-tests: false
+          # The builder embeds the ref in the build-log/artifact filename without
+          # sanitizing it. A branch like "fix/foo" turns the "/" into a path
+          # separator on Windows and the build fails. Pass the commit SHA so the
+          # name is always slash-free.
+          extension-ref: ${{ github.sha }}
 
   pecl:
     runs-on: ubuntu-latest

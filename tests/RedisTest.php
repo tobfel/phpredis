@@ -31,11 +31,11 @@ class Redis_Test extends TestSuite {
         $result = [Redis::SERIALIZER_NONE, Redis::SERIALIZER_PHP];
 
         if (defined('Redis::SERIALIZER_IGBINARY'))
-            $result[] = Redis::SERIALIZER_IGBINARY;
+            $result['igbinary'] = Redis::SERIALIZER_IGBINARY;
         if (defined('Redis::SERIALIZER_JSON'))
-            $result[] = Redis::SERIALIZER_JSON;
+            $result['json'] = Redis::SERIALIZER_JSON;
         if (defined('Redis::SERIALIZER_MSGPACK'))
-            $result[] = Redis::SERIALIZER_MSGPACK;
+            $result['msgpack'] = Redis::SERIALIZER_MSGPACK;
 
         return $result;
     }
@@ -2238,6 +2238,91 @@ class Redis_Test extends TestSuite {
         $this->redis->del('{set}z');  // x, y, and z ALL missing
         $count = $this->redis->sDiffStore('{set}k', '{set}x', '{set}y', '{set}z');  // x - y - z
         $this->assertEquals(0, $count);
+    }
+
+    public function testUnionCard() {
+        if ( ! $this->haveCommand('SUNIONCARD'))
+            $this->markTestSkipped();
+
+        $set_data = [
+            ['aardvark', 'dog', 'fish', 'squirrel', 'tiger'],
+            ['bear', 'coyote', 'fish', 'gorilla', 'dog']
+        ];
+
+        $ssets = [];
+
+        foreach ($set_data as $n => $values) {
+            $sset = "s{set}:$n";
+            $this->redis->del($sset);
+            $ssets[] = $sset;
+
+            foreach ($values as $value) {
+                $this->assertEquals(1, $this->redis->sAdd($sset, $value));
+            }
+        }
+
+        $exp = count(array_unique(array_merge(...$set_data)));
+
+        $this->assertEquals($exp, $this->redis->sunioncard($ssets));
+        $this->assertEquals($exp, $this->redis->sunioncard($ssets, null));
+        $this->assertEquals($exp, $this->redis->sunioncard($ssets, []));
+
+        $this->assertEquals(1, $this->redis->sunioncard($ssets, ['LIMIT' => 1]));
+        $this->assertEquals(2, $this->redis->sunioncard($ssets, ['LIMIT' => 2]));
+        $this->assertEquals($exp, $this->redis->sunioncard($ssets, ['LIMIT' => 0]));
+
+        $approx = $this->redis->sunioncard($ssets, ['APPROX']);
+        $this->assertIsInt($approx);
+        $this->assertTrue($approx >= 1);
+        $this->assertTrue($approx <= $exp);
+
+        $approx = $this->redis->sunioncard($ssets, ['LIMIT' => 2, 'APPROX']);
+        $this->assertIsInt($approx);
+        $this->assertTrue($approx >= 1);
+        $this->assertTrue($approx <= 2);
+
+        $this->assertFalse(@$this->redis->sunioncard($ssets, ['LIMIT' => -1]));
+        $this->assertFalse(@$this->redis->sunioncard([]));
+
+        $this->redis->del($ssets);
+    }
+
+    public function testDiffCard() {
+        if ( ! $this->haveCommand('SDIFFCARD'))
+            $this->markTestSkipped();
+
+        $set_data = [
+            ['aardvark', 'dog', 'fish', 'squirrel', 'tiger'],
+            ['bear', 'coyote', 'fish', 'gorilla', 'dog'],
+            ['coyote', 'squirrel']
+        ];
+
+        $ssets = [];
+
+        foreach ($set_data as $n => $values) {
+            $sset = "s{set}:$n";
+            $this->redis->del($sset);
+            $ssets[] = $sset;
+
+            foreach ($values as $value) {
+                $this->assertEquals(1, $this->redis->sAdd($sset, $value));
+            }
+        }
+
+        $exp = count(array_diff($set_data[0], ...array_slice($set_data, 1)));
+
+        $this->assertEquals($exp, $this->redis->sdiffcard($ssets));
+        $this->assertEquals($exp, $this->redis->sdiffcard($ssets, null));
+        $this->assertEquals($exp, $this->redis->sdiffcard($ssets, []));
+
+        $this->assertEquals(1, $this->redis->sdiffcard($ssets, ['LIMIT' => 1]));
+        $this->assertEquals(2, $this->redis->sdiffcard($ssets, ['LIMIT' => 2]));
+        $this->assertEquals($exp, $this->redis->sdiffcard($ssets, ['LIMIT' => 0]));
+
+        $this->assertFalse(@$this->redis->sdiffcard($ssets, ['LIMIT' => -1]));
+        $this->assertFalse(@$this->redis->sdiffcard([]));
+
+        $this->redis->del($ssets);
     }
 
     public function testInterCard() {
@@ -5576,13 +5661,49 @@ class Redis_Test extends TestSuite {
         $this->checkCompression(Redis::COMPRESSION_ZSTD, 9);
     }
 
-
     public function testCompressionLZ4() {
         if ( ! defined('Redis::COMPRESSION_LZ4'))
             $this->markTestSkipped();
 
+        $this->redis->setOption(Redis::OPT_COMPRESSION, Redis::COMPRESSION_LZ4);
+        $payload = $this->lz4PayloadWithDeclaredLength('LEAK_ME!', 4096);
+        $this->assertThrowsMatch($payload, function ($payload) {
+            $this->redis->_uncompress($payload);
+        }, '/Invalid compressed data or uncompression error/');
+
         $this->checkCompression(Redis::COMPRESSION_LZ4, 0);
         $this->checkCompression(Redis::COMPRESSION_LZ4, 9);
+    }
+
+    private function lz4PayloadWithDeclaredLength($value, $declared_len) {
+        $len = strlen($value);
+        $lz4 = chr(min($len, 15) << 4);
+
+        if ($len >= 15) {
+            $extra = $len - 15;
+            while ($extra >= 255) {
+                $lz4 .= "\xff";
+                $extra -= 255;
+            }
+            $lz4 .= chr($extra);
+        }
+
+        $declared = pack('V', $declared_len);
+
+        return chr($this->crc8($declared)) . $declared . $lz4 . $value;
+    }
+
+    private function crc8($value) {
+        $crc = 0xff;
+
+        for ($i = 0; $i < strlen($value); $i++) {
+            $crc ^= ord($value[$i]);
+            for ($j = 0; $j < 8; $j++) {
+                $crc = $crc & 0x80 ? (($crc << 1) ^ 0x31) & 0xff : ($crc << 1) & 0xff;
+            }
+        }
+
+        return $crc;
     }
 
     private function checkCompression($mode, $level) {
@@ -5996,9 +6117,9 @@ class Redis_Test extends TestSuite {
             $this->redis->getOption(Redis::OPT_COMPRESSION)
         ];
 
-        foreach ($this->getSerializers() as $ser) {
+        foreach ($this->getSerializers() as $ser_name => $ser) {
             $compressors = $this->getCompressors();
-            foreach ($compressors as $cmp) {
+            foreach ($compressors as $cmp_name => $cmp) {
                 $this->redis->setOption(Redis::OPT_SERIALIZER, $ser);
                 $this->redis->setOption(Redis::OPT_COMPRESSION, $cmp);
 
@@ -6016,10 +6137,12 @@ class Redis_Test extends TestSuite {
                     $this->redis->setOption(Redis::OPT_SERIALIZER, $ser);
                     $this->redis->setOption(Redis::OPT_COMPRESSION, $cmp);
 
-                    $this->assertEquals($raw, $this->redis->_pack($v));
+                    $this->assertEquals($raw, $this->redis->_pack($v),
+                                        "{$ser_name} + {$cmp_name}");
 
                     $unpacked = $this->redis->get('packkey');
-		    $this->assertEquals($unpacked, $this->redis->_unpack($raw));
+                    $this->assertEquals($unpacked, $this->redis->_unpack($raw),
+                                        "{$ser_name} + {$cmp_name}");
 		}
 	    }
         }
@@ -8727,6 +8850,13 @@ class Redis_Test extends TestSuite {
             $list = $this->redis->command('list', 'filterby', 'pattern', 'lol*');
             $this->assertIsArray($list);
             $this->assertEquals(['lolwut'], $list);
+
+            $keys_and_flags = $this->redis->command(
+                'getkeysandflags', 'MSET', 'key1', 'value1',
+            );
+            $this->assertEquals(
+                [['key1', ['OW', 'update']]], $keys_and_flags,
+            );
         }
     }
 
@@ -8910,6 +9040,20 @@ class Redis_Test extends TestSuite {
             $this->assertTrue($this->redis->set('captain', 'Archer'));
             $this->assertEquals(1, $this->redis->delex('captain', $arg));
         }
+    }
+
+    public function testAnonymousClassSerializationFailure() {
+        $this->redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_PHP);
+
+        $obj = new class() {};
+
+        $this->assertThrowsMatch(null, function () use ($obj) {
+            $this->redis->set('payload', $obj);
+        }, "/Serialization of 'class@anonymous' is not allowed/");
+
+        /* Ensure extension remains stable after failure */
+        $this->assertTrue($this->redis->set('after_failure', 'ok'));
+        $this->assertEquals('ok', $this->redis->get('after_failure'));
     }
 }
 ?>

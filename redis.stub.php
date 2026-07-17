@@ -881,7 +881,7 @@ class Redis {
      *
      * @example
      * $redis->blPop('list1', 'list2', 'list3', 1.5);
-     * $relay->blPop(['list1', 'list2', 'list3'], 1.5);
+     * $redis->blPop(['list1', 'list2', 'list3'], 1.5);
      */
     public function blPop(string|array $key_or_keys, string|float|int $timeout_or_key, mixed ...$extra_args): Redis|array|null|false;
 
@@ -3719,6 +3719,45 @@ class Redis {
      * $redis->sInterCard(['set1', 'set2', 'set3']);
      */
     public function sintercard(array $keys, int $limit = -1): Redis|int|false;
+
+    /**
+     * Compute the union of one or more sets and return the cardinality of the result.
+     *
+     * @param array      $keys    One or more set key names.
+     * @param array|null $options An optional array of options that modifies how the command works.
+     *
+     * @return Redis|int|false The cardinality of the union of the sets.
+     *
+     * @see https://redis.io/docs/latest/commands/sunioncard/
+     *
+     * @example
+     * $redis->sAdd('set1', 'apple', 'pear', 'banana', 'carrot');
+     * $redis->sAdd('set2', 'apple',         'banana');
+     * $redis->sAdd('set3',          'pear', 'banana');
+     *
+     * $redis->sUnionCard(['set1', 'set2', 'set3']);
+     * $redis->sUnionCard(['set1', 'set2'], ['LIMIT' => 2]);
+     * $redis->sUnionCard(['set1', 'set2'], ['LIMIT' => 2, 'APPROX']);
+     */
+    public function sunioncard(array $keys, ?array $options = null): Redis|int|false;
+
+    /**
+     * Compute the difference of one or more sets and return the cardinality of the result.o
+     *
+     * @param array      $keys    One or more set key names.
+     * @param array|null $options An optional array of options that modifies how the command works
+     *
+     * @return Redis|int|false The cardinality of the difference of the sets.
+     *
+     * @see https://redis.io/docs/latest/commands/sdiffcard/
+     *
+     * @example
+     * $redis->sAdd('set1', 'apple', 'pear', 'banana
+     * $redis->sAdd('set2', 'apple',         'banana');
+     * $redis->sAdd('set3',          'pear', 'banana');
+     *
+     */
+    public function sdiffcard(array $keys, ?array $options = null): Redis|int|false;
 
     /**
      * Perform the intersection of one or more Redis SETs, storing the result in a destination
