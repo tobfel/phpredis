@@ -916,7 +916,7 @@ static zend_string *redis_hash_auth(zend_string *user, zend_string *pass) {
     efree(ctx);
 
     hex = zend_string_safe_alloc(ops->digest_size, 2, 0, 0);
-    php_hash_bin2hex(ZSTR_VAL(hex), digest, ops->digest_size);
+    zend_bin2hex(ZSTR_VAL(hex), digest, ops->digest_size);
     ZSTR_VAL(hex)[2 * ops->digest_size] = 0;
 
     efree(digest);
@@ -3354,9 +3354,10 @@ PHP_REDIS_API int redis_sock_connect(RedisSock *redis_sock)
     /* Attempt to set TCP_NODELAY/TCP_KEEPALIVE if we're not using a unix socket. */
     if (!usocket) {
         php_netstream_data_t *sock = (php_netstream_data_t*)redis_sock->stream->abstract;
+        int tcp_keepalive = redis_sock->tcp_keepalive;
         err = setsockopt(sock->socket, IPPROTO_TCP, TCP_NODELAY, (char*) &tcp_flag, sizeof(tcp_flag));
         PHPREDIS_NOTUSED(err);
-        err = setsockopt(sock->socket, SOL_SOCKET, SO_KEEPALIVE, (char*) &redis_sock->tcp_keepalive, sizeof(redis_sock->tcp_keepalive));
+        err = setsockopt(sock->socket, SOL_SOCKET, SO_KEEPALIVE, (char*) &tcp_keepalive, sizeof(tcp_keepalive));
         PHPREDIS_NOTUSED(err);
     }
 
@@ -4496,7 +4497,9 @@ redis_sock_gets(RedisSock *redis_sock, char *buf, int buf_size, size_t *line_siz
         return -1;
     }
 
-    if(redis_sock_get_line(redis_sock, buf, buf_size, line_size) == NULL) {
+    if(redis_sock_get_line(redis_sock, buf, buf_size, line_size) == NULL ||
+       *line_size < 2 || memcmp(buf + *line_size - 2, ZEND_STRL("\r\n")) != 0)
+    {
         if (redis_sock->port < 0) {
             snprintf(buf, buf_size, "read error on connection to %s", ZSTR_VAL(redis_sock->host));
         } else {
@@ -4511,8 +4514,8 @@ redis_sock_gets(RedisSock *redis_sock, char *buf, int buf_size, size_t *line_siz
     }
 
     /* We don't need \r\n */
-    *line_size-=2;
-    buf[*line_size]='\0';
+    *line_size -= 2;
+    buf[*line_size] = '\0';
 
     /* Success! */
     return 0;

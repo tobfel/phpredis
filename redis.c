@@ -315,7 +315,7 @@ static void redis_random_hex_bytes(char *dst, size_t dstsize) {
 
     /* First try to have PHP generate the bytes */
     if (php_random_bytes_silent(ZSTR_VAL(s), bytes) == SUCCESS) {
-        php_hash_bin2hex(dst, (unsigned char *)ZSTR_VAL(s), bytes);
+        zend_bin2hex(dst, (unsigned char *)ZSTR_VAL(s), bytes);
         zend_string_release(s);
         return;
     }
@@ -532,12 +532,6 @@ redis_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent)
     double timeout = 0.0, read_timeout = 0.0;
     redis_object *redis;
     int af_unix;
-
-#ifdef ZTS
-    /* not sure how in threaded mode this works so disabled persistence at
-     * first */
-    persistent = 0;
-#endif
 
     ZEND_PARSE_PARAMETERS_START(1, 7)
         Z_PARAM_STRING(host, host_len)
@@ -1827,6 +1821,7 @@ REDIS_KW_METHOD(bgSave, "BGSAVE", redis_empty_cmd, redis_boolean_response);
 REDIS_KW_METHOD(bgrewriteaof, "BGREWRITEAOF", redis_empty_cmd, redis_boolean_response);
 REDIS_KW_METHOD(blPop, "BLPOP", redis_blocking_pop_cmd, redis_sock_read_multibulk_reply);
 REDIS_KW_METHOD(blmove, "BLMOVE", redis_lmove_cmd, redis_string_response);
+REDIS_KW_METHOD(blmovem, "BLMOVEM", redis_blmovem_cmd, redis_sock_read_multibulk_reply);
 REDIS_KW_METHOD(blmpop, "BLMPOP", redis_mpop_cmd, redis_mpop_response);
 REDIS_KW_METHOD(brPop, "BRPOP", redis_blocking_pop_cmd, redis_sock_read_multibulk_reply);
 REDIS_KW_METHOD(bzPopMax, "BZPOPMAX", redis_blocking_pop_cmd, redis_sock_read_multibulk_reply);
@@ -1885,6 +1880,7 @@ REDIS_KW_METHOD(incrByFloat, "INCRBYFLOAT", redis_key_dbl_cmd, redis_bulk_double
 REDIS_KW_METHOD(keys, "KEYS", redis_key_cmd, redis_mbulk_reply_raw);
 REDIS_KW_METHOD(lLen, "LLEN", redis_key_cmd, redis_long_response);
 REDIS_KW_METHOD(lMove, "LMOVE", redis_lmove_cmd, redis_string_response);
+REDIS_KW_METHOD(lmovem, "LMOVEM", redis_lmovem_cmd, redis_sock_read_multibulk_reply);
 REDIS_KW_METHOD(lPop, "LPOP", redis_pop_cmd, redis_pop_response);
 REDIS_KW_METHOD(lPush, "LPUSH", redis_key_varval_cmd, redis_long_response);
 REDIS_KW_METHOD(lPushx, "LPUSHX", redis_kv_cmd, redis_long_response);

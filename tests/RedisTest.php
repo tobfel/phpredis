@@ -1588,6 +1588,74 @@ class Redis_Test extends TestSuite {
         $this->assertGT(.09, $et - $st);
     }
 
+    public function testLmovem() {
+        if ( ! $this->haveCommand('LMOVEM'))
+            $this->markTestSkipped();
+
+        [$src, $dst] = ['{lm}src', '{lm}dst'];
+        $left = $this->getLeftConstant();
+        $right = $this->getRightConstant();
+
+        $this->redis->del($src, $dst);
+        $this->redis->rPush($src, 'one', 'two', 'three', 'four');
+
+        $this->assertEquals(['one'], $this->redis->lmovem($src, $dst, $left, $right));
+        $this->assertEquals(
+            ['two', 'three'],
+            $this->redis->lmovem($src, $dst, $left, $right, ['COUNT' => [2, 'BULK']])
+        );
+        $this->assertEquals(['four'], $this->redis->lRange($src, 0, -1));
+        $this->assertEquals(['one', 'two', 'three'], $this->redis->lRange($dst, 0, -1));
+
+        $this->redis->del($src, $dst);
+        $this->redis->rPush($src, 'one', 'two', 'three', 'four');
+
+        $this->assertEquals(
+            ['three', 'two', 'one'],
+            $this->redis->lmovem($src, $dst, $left, $left, ['COUNT' => [3, 'OBO']])
+        );
+        $this->assertEquals(['three', 'two', 'one'], $this->redis->lRange($dst, 0, -1));
+        $this->assertEquals([],
+            $this->redis->lmovem($src, $dst, $left, $right, ['EXACTLY' => [2, 'BULK']])
+        );
+        $this->assertEquals(['four'], $this->redis->lRange($src, 0, -1));
+
+        $this->assertFalse(@$this->redis->lmovem(
+            $src, $dst, $left, $right, ['COUNT' => [0, 'BULK']]
+        ));
+        $this->assertFalse(@$this->redis->lmovem(
+            $src, $dst, $left, $right, ['COUNT' => [1, 'INVALID']]
+        ));
+    }
+
+    public function testBlmovem() {
+        if ( ! $this->haveCommand('BLMOVEM'))
+            $this->markTestSkipped();
+
+        [$src, $dst] = ['{blm}src', '{blm}dst'];
+        $left = $this->getLeftConstant();
+        $right = $this->getRightConstant();
+
+        $this->redis->del($src, $dst);
+        $this->redis->rPush($src, 'one', 'two', 'three');
+        $this->assertEquals(
+            ['one', 'two'],
+            $this->redis->blmovem(
+                $src, $dst, $left, $right, .1, ['EXACTLY' => [2, 'BULK']]
+            )
+        );
+
+        $st = microtime(true);
+        $ret = $this->redis->blmovem(
+            $src, $dst, $left, $right, .1, ['EXACTLY' => [2, 'BULK']]
+        );
+        $et = microtime(true);
+
+        $this->assertEquals([], $ret);
+        $this->assertGT(.09, $et - $st);
+        $this->assertEquals(['three'], $this->redis->lRange($src, 0, -1));
+    }
+
     // lRem testing
     public function testLRem() {
         $this->redis->del('list');
@@ -8432,6 +8500,33 @@ class Redis_Test extends TestSuite {
             ->savePath($this->sessionSavePath());
     }
 
+    protected function assertSessionRunnerResult($runner, bool $expect_success = true): bool {
+        $output = $runner->execFg();
+        $success = $output === 'SUCCESS';
+
+        if ($success !== $expect_success) {
+            $message = $expect_success
+                ? 'External session runner failed'
+                : 'Expected external session runner to fail';
+
+            $this->externalCmdFailure($runner->getCmd(), $output, $message,
+                                      $runner->getExitCode());
+        }
+
+        return $success === $expect_success;
+    }
+
+    protected function startSessionRunner($runner): bool {
+        if ($runner->execBg())
+            return true;
+
+        $this->externalCmdFailure($runner->getCmd(), NULL,
+                                  'Failed to start external session runner',
+                                  $runner->getExitCode());
+
+        return false;
+    }
+
     protected function testRequiresMode(string $mode) {
         if (php_sapi_name() != $mode) {
             $this->markTestSkipped("Test requires PHP running in '$mode' mode");
@@ -8452,7 +8547,7 @@ class Redis_Test extends TestSuite {
                 ->data($data)
                 ->compression($name);
 
-            $this->assertEquals('SUCCESS', $runner->execFg());
+            $this->assertSessionRunnerResult($runner);
 
             $this->redis->setOption(Redis::OPT_COMPRESSION, $val);
             $this->assertPatternMatch("/.*$data.*/", $this->redis->get($runner->getSessionKey()));
@@ -8465,8 +8560,25 @@ class Redis_Test extends TestSuite {
 
         $runner = $this->sessionRunner();
 
-        $this->assertEquals('SUCCESS', $runner->execFg());
-        $this->assertKeyExists($runner->getSessionKey());
+        $this->assertSessionRunnerResult($runner);
+        if ( ! $this->assertKeyExists($runner->getSessionKey())) {
+            $this->externalCmdFailure($runner->getCmd(), $runner->output(),
+                                      'Failed to save session data to Redis',
+                                      $runner->getExitCode());
+        }
+    }
+
+    public function testSession_savedToRedisEarlyRefresh() {
+        $this->testRequiresMode('cli');
+
+        $runner = $this->sessionRunner()->earlyRefresh(true);
+
+        $this->assertSessionRunnerResult($runner);
+        if ( ! $this->assertKeyExists($runner->getSessionKey())) {
+            $this->externalCmdFailure($runner->getCmd(), $runner->output(),
+                                      'Failed to save session data to Redis',
+                                      $runner->getExitCode());
+        }
     }
 
     protected function sessionWaitUsec() {
@@ -8483,7 +8595,8 @@ class Redis_Test extends TestSuite {
 
         $runner = $this->sessionRunner()->sleep(5);
 
-        $this->assertTrue($runner->execBg());
+        if ( ! $this->startSessionRunner($runner))
+            return;
 
         if ( ! $runner->waitForLockKey($this->redis, $this->sessionWaitSec())) {
             $this->externalCmdFailure($runner->getCmd(), $runner->output(),
@@ -8499,7 +8612,7 @@ class Redis_Test extends TestSuite {
             ->lockingEnabled(false)
             ->sleep(5);
 
-        $this->assertEquals('SUCCESS', $runner->execFg());
+        $this->assertSessionRunnerResult($runner);
         $this->assertKeyMissing($runner->getSessionLockKey());
     }
 
@@ -8510,7 +8623,8 @@ class Redis_Test extends TestSuite {
             ->sleep(1)
             ->lockingEnabled(true);
 
-        $this->assertTrue($runner->execBg());
+        if ( ! $this->startSessionRunner($runner))
+            return;
         usleep($this->sessionWaitUsec() + 100000);
         $this->assertKeyMissing($runner->getSessionLockKey());
     }
@@ -8522,7 +8636,8 @@ class Redis_Test extends TestSuite {
             ->sleep(10)
             ->maxExecutionTime(2);
 
-        $this->assertTrue($runner1->execBg());
+        if ( ! $this->startSessionRunner($runner1))
+            return;
         usleep(100000);
 
         $runner2 = $this->sessionRunner()
@@ -8530,7 +8645,7 @@ class Redis_Test extends TestSuite {
             ->sleep(0);
 
         $st = microtime(true);
-        $this->assertEquals('SUCCESS', $runner2->execFg());
+        $this->assertSessionRunnerResult($runner2);
         $el = microtime(true) - $st;
         $this->assertLT(4, $el);
     }
@@ -8544,7 +8659,8 @@ class Redis_Test extends TestSuite {
             ->lockingEnabled(true)
             ->lockExpires(2);
 
-        $this->assertTrue($runner1->execBg());
+        if ( ! $this->startSessionRunner($runner1))
+            return;
         usleep(100000);
 
         $runner2 = $this->sessionRunner()
@@ -8552,7 +8668,7 @@ class Redis_Test extends TestSuite {
             ->sleep(0);
 
         $st = microtime(true);
-        $this->assertEquals('SUCCESS', $runner2->execFg());
+        $this->assertSessionRunnerResult($runner2);
         $this->assertLT(3, microtime(true) - $st);
     }
 
@@ -8574,9 +8690,10 @@ class Redis_Test extends TestSuite {
             ->lockExpires(10)
             ->data('secondProcess');
 
-        $this->assertTrue($runner->execBg());
+        if ( ! $this->startSessionRunner($runner))
+            return;
         usleep(1500000); // 1.5 sec
-        $this->assertEquals('SUCCESS', $runner2->execFg());
+        $this->assertSessionRunnerResult($runner2);
 
         $this->assertEquals('secondProcess', $runner->getData());
     }
@@ -8590,7 +8707,7 @@ class Redis_Test extends TestSuite {
             ->lockExpires(1)
             ->data('firstProcess');
 
-        $this->assertNotEquals('SUCCESS', $runner->execFg());
+        $this->assertSessionRunnerResult($runner, false);
         $this->assertNotEquals('firstProcess', $runner->getData());
     }
 
@@ -8600,7 +8717,8 @@ class Redis_Test extends TestSuite {
         $runner = $this->sessionRunner()
             ->sleep(10);
 
-        $this->assertTrue($runner->execBg());
+        if ( ! $this->startSessionRunner($runner))
+            return;
         if ( ! $runner->waitForLockKey($this->redis, 2)) {
             $this->externalCmdFailure($runner->getCmd(), $runner->output(),
                                       'Failed waiting for session lock key',
@@ -8641,7 +8759,8 @@ class Redis_Test extends TestSuite {
             ->lockWaitTime(20000)
             ->lockRetries(0);
 
-        $this->assertTrue($runner->execBg());
+        if ( ! $this->startSessionRunner($runner))
+            return;
 
         if ( ! $runner->waitForLockKey($this->redis, 3)) {
             $this->externalCmdFailure($runner->getCmd(), $runner->output(),
@@ -8650,7 +8769,7 @@ class Redis_Test extends TestSuite {
         }
 
         $st = microtime(true);
-        $this->assertNotEquals('SUCCESS', $runner2->execFg());
+        $this->assertSessionRunnerResult($runner2, false);
         $et = microtime(true);
         $this->assertBetween($et - $st, 2, 3);
     }
@@ -8670,9 +8789,12 @@ class Redis_Test extends TestSuite {
 
         /* 1.  Start a background process, and wait until we are certain
          *     the lock was attained. */
-        $this->assertTrue($runner->execBg());
+        if ( ! $this->startSessionRunner($runner))
+            return;
         if ( ! $runner->waitForLockKey($this->redis, 1)) {
-            $this->assert('Failed waiting for session lock key');
+            $this->externalCmdFailure($runner->getCmd(), $runner->output(),
+                                      'Failed waiting for session lock key',
+                                      $runner->getExitCode());
             return;
         }
 
@@ -8683,7 +8805,7 @@ class Redis_Test extends TestSuite {
             ->sleep(0);
 
         $tm2 = microtime(true);
-        $this->assertEquals('SUCCESS', $runner2->execFg());
+        $this->assertSessionRunnerResult($runner2);
         $tm3 = microtime(true);
 
         /* 3. Verify we had to wait for this lock */
@@ -8704,11 +8826,12 @@ class Redis_Test extends TestSuite {
             ->lockingEnabled(true)
             ->lockWaitTime(3000000);
 
-        $this->assertTrue($runner->execBg());
+        if ( ! $this->startSessionRunner($runner))
+            return;
         usleep(100000);
 
         $st = microtime(true);
-        $this->assertEquals('SUCCESS', $runner2->execFg());
+        $this->assertSessionRunnerResult($runner2);
         $et = microtime(true);
 
         $this->assertBetween($et - $st, 2.5, 3.5);
@@ -8910,7 +9033,7 @@ class Redis_Test extends TestSuite {
             ->lockRetries(1)
             ->data($data);
 
-        $this->assertEquals('SUCCESS', $runner->execFg());
+        $this->assertSessionRunnerResult($runner);
 
         $new_id = $runner->regenerateId($lock, $destroy, $proxy);
 
@@ -8954,7 +9077,7 @@ class Redis_Test extends TestSuite {
         $this->testRequiresMode('cli');
 
         $runner = $this->sessionRunner()->lifetime(600);
-        $this->assertEquals('SUCCESS', $runner->execFg());
+        $this->assertSessionRunnerResult($runner);
         $this->assertEquals(600, $this->redis->ttl($runner->getSessionKey()));
     }
 
@@ -8962,10 +9085,10 @@ class Redis_Test extends TestSuite {
         $this->testRequiresMode('cli');
 
         $runner1 = $this->sessionRunner()->lifetime(600);
-        $this->assertEquals('SUCCESS', $runner1->execFg());
+        $this->assertSessionRunnerResult($runner1);
 
         $runner2 = $this->sessionRunner()->id($runner1->getId())->lifetime(1800);
-        $this->assertEquals('SUCCESS', $runner2->execFg());
+        $this->assertSessionRunnerResult($runner2);
 
         $this->assertEquals(1800, $this->redis->ttl($runner2->getSessionKey()));
     }
@@ -8976,7 +9099,7 @@ class Redis_Test extends TestSuite {
         $data = uniqid(__FUNCTION__);
 
         $runner = $this->sessionRunner()->lifetime(600)->data($data);
-        $this->assertEquals('SUCCESS', $runner->execFg());
+        $this->assertSessionRunnerResult($runner);
         $this->redis->expire($runner->getSessionKey(), 9999);
 
         $this->assertEquals($data, $runner->getData());
