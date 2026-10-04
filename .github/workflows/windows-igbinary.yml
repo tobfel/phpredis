@@ -45,6 +45,8 @@ jobs:
             Remove-Item -Path build\*\artifacts -Recurse -Force
           }
         shell: pwsh
+      - name: Clean build directory
+        run: Remove-Item -Path build -Recurse -Force -ErrorAction SilentlyContinue
 
       - name: Build phpredis
         uses: php/php-windows-builder/extension@v1
