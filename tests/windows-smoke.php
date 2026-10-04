@@ -25,8 +25,20 @@ foreach (['redis', 'rediscluster'] as $handler) {
     }
 }
 
-// The first Windows package has no optional serializer/compression dependencies.
-foreach (['SERIALIZER_IGBINARY', 'SERIALIZER_MSGPACK', 'COMPRESSION_LZF',
+$expectIgbinary = in_array('--igbinary', $argv, true);
+if ($expectIgbinary) {
+    if (!extension_loaded('igbinary') || !defined('Redis::SERIALIZER_IGBINARY')) {
+        throw new RuntimeException('Igbinary extension or Redis serializer support is missing');
+    }
+    if (!$redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_IGBINARY) ||
+        $redis->_unserialize($redis->_serialize($value)) !== $value) {
+        throw new RuntimeException('Igbinary serializer round trip failed');
+    }
+} elseif (defined('Redis::SERIALIZER_IGBINARY')) {
+    throw new RuntimeException('Unexpected optional feature SERIALIZER_IGBINARY');
+}
+
+foreach (['SERIALIZER_MSGPACK', 'COMPRESSION_LZF',
           'COMPRESSION_LZ4', 'COMPRESSION_ZSTD'] as $constant) {
     if (defined("Redis::$constant")) {
         throw new RuntimeException("Unexpected optional feature $constant");

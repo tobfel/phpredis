@@ -19,16 +19,13 @@ jobs:
       # Releases must use the tag, since PIE searches for that exact version.
       EXTENSION_REF: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
     steps:
-      - name: Clean build directory
-        run: Remove-Item -Path build -Recurse -Force -ErrorAction SilentlyContinue
-        
       - name: Checkout
         uses: actions/checkout@v5
         with:
           submodules: true
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
 
-      - name: Build igbinary
+      - name: Build phpredis with igbinary
         uses: php/php-windows-builder/extension@v1
         with:
           arch: x64
@@ -36,27 +33,9 @@ jobs:
           ts: ${{ matrix.ts }}
           extension-ref: ${{ env.EXTENSION_REF }}
           build-directory: build
-          repo: php/pecl-php-igbinary
-          run-tests: false
-
-      - name: Clean build artifacts
-        run: |
-          if (Test-Path build\*\artifacts) {
-            Remove-Item -Path build\*\artifacts -Recurse -Force
-          }
-        shell: pwsh
-      - name: Clean build directory
-        run: Remove-Item -Path build -Recurse -Force -ErrorAction SilentlyContinue
-
-      - name: Build phpredis
-        uses: php/php-windows-builder/extension@v1
-        with:
-          arch: x64
-          php-version: ${{ matrix.php }}
-          ts: ${{ matrix.ts }}
-          extension-ref: ${{ env.EXTENSION_REF }}
-          build-directory: build
-          args: --enable-redis-session
+          # The builder detects ADD_EXTENSION_DEP in config.w32 and builds
+          # igbinary, installs its headers/import library, and packages its DLL.
+          args: --enable-redis-session --enable-redis-igbinary
           run-tests: false
 
       - name: Check the PIE package and load its DLL
@@ -77,13 +56,17 @@ jobs:
           if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) {
               throw "The PIE package is missing $name.dll"
           }
+          $igbinary = Join-Path $package 'php_igbinary.dll'
+          if (-not (Test-Path -LiteralPath $igbinary -PathType Leaf)) {
+              throw 'The package is missing php_igbinary.dll'
+          }
           # Use the PHP runtime downloaded by the builder for this matrix entry.
           $php = @(Get-ChildItem build -Recurse -Filter php.exe -File |
               Where-Object { $_.Directory.Name -eq 'php-bin' })
           if ($php.Count -ne 1) {
               throw 'Expected exactly one matching PHP runtime from the builder'
           }
-          & $php[0].FullName -n -d "extension=$dll" tests/windows-smoke.php
+          & $php[0].FullName -n -d "extension=$igbinary" -d "extension=$dll" tests/windows-smoke.php --igbinary
           if ($LASTEXITCODE -ne 0) {
               throw 'The packaged Redis extension failed its smoke test'
           }
