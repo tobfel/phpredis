@@ -1,11 +1,6 @@
-name: Windows
+name: Windows-with-igbinary
 
 on:
-  push:
-  pull_request:
-  release:
-    types: [published]
-  # Build the selected ref without uploading anything to a release.
   workflow_dispatch:
 
 permissions:
