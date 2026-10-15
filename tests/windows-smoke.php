@@ -26,11 +26,26 @@ foreach (['redis', 'rediscluster'] as $handler) {
 }
 
 // The first Windows package has no optional serializer/compression dependencies.
+// Allow packaging variants to opt in to including optional features by setting
+// the environment variable ALLOW_OPTIONAL_FEATURES=1 in CI.
+$allowOptional = getenv('ALLOW_OPTIONAL_FEATURES') === '1';
+
+$found = [];
 foreach (['SERIALIZER_IGBINARY', 'SERIALIZER_MSGPACK', 'SERIALIZER_PHPSER',
           'COMPRESSION_LZF', 'COMPRESSION_LZ4', 'COMPRESSION_ZSTD'] as $constant) {
     if (defined("Redis::$constant")) {
-        throw new RuntimeException("Unexpected optional feature $constant");
+        $found[] = $constant;
+    }
+}
+
+if (!empty($found)) {
+    if (!$allowOptional) {
+        throw new RuntimeException('Unexpected optional feature(s): ' . implode(', ', $found));
+    } else {
+        // Non-fatal: print a warning so packagers can see what's included.
+        fwrite(STDERR, 'Warning: Optional features present: ' . implode(', ', $found) . PHP_EOL);
     }
 }
 
 echo 'Redis ', phpversion('redis'), " Windows package smoke test passed\n";
+?>
