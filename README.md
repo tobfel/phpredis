@@ -463,6 +463,7 @@ $redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_PHP);	  // Use built-
 $redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_IGBINARY); // Use igBinary serialize/unserialize
 $redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_MSGPACK);  // Use msgpack serialize/unserialize
 $redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_JSON);  // Use JSON to serialize/unserialize
+$redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_PHPSER);  // Use phpser serialize/unserialize (signed when phpser.key is set)
 
 $redis->setOption(Redis::OPT_PREFIX, 'myAppName:');	// use custom prefix on all keys
 
@@ -495,7 +496,8 @@ Parameter value.
 ###### *Example*
 ~~~php
 // return Redis::SERIALIZER_NONE, Redis::SERIALIZER_PHP,
-//        Redis::SERIALIZER_IGBINARY, Redis::SERIALIZER_MSGPACK or Redis::SERIALIZER_JSON
+//        Redis::SERIALIZER_IGBINARY, Redis::SERIALIZER_MSGPACK, Redis::SERIALIZER_JSON
+//        or Redis::SERIALIZER_PHPSER
 $redis->getOption(Redis::OPT_SERIALIZER);
 ~~~
 
@@ -3096,7 +3098,7 @@ The third argument is a set of options.  It can define the `AGGREGATE` option wh
 ###### *Parameters*
 *arrayZSetKeys*
 *arrayWeights*
-*arrayOptions* Two options are available: `withscores => TRUE`, and `aggregate => $behaviour`.  Either "SUM", "MIN", or "MAX" defines the behaviour to use on duplicate entries during the zinter.
+*arrayOptions* Two options are available: `withscores => TRUE`, and `aggregate => $behaviour`.  Either "SUM", "MIN", "MAX", or "COUNT" (Redis >= 8.8) defines the behaviour to use on duplicate entries during the zinter.
 
 ###### *Return value*
 *ARRAY* The result of the intersection of sets.
@@ -3133,7 +3135,7 @@ The forth argument defines the `AGGREGATE` option which specify how the results 
 *keyOutput*
 *arrayZSetKeys*
 *arrayWeights*
-*aggregateFunction* Either "SUM", "MIN", or "MAX": defines the behaviour to use on duplicate entries during the zinterstore.
+*aggregateFunction* Either "SUM", "MIN", "MAX", or "COUNT" (Redis >= 8.8): defines the behaviour to use on duplicate entries during the zinterstore.
 
 ###### *Return value*
 *LONG* The number of values in the new sorted set.
@@ -3421,7 +3423,7 @@ The third argument is a set of options.  It can define the `AGGREGATE` option wh
 ###### *Parameters*
 *arrayZSetKeys*
 *arrayWeights*
-*arrayOptions* Two options are available: `withscores => TRUE`, and `aggregate => $behaviour`.  Either "SUM", "MIN", or "MAX" defines the behaviour to use on duplicate entries during the zunion.
+*arrayOptions* Two options are available: `withscores => TRUE`, and `aggregate => $behaviour`.  Either "SUM", "MIN", "MAX", or "COUNT" (Redis >= 8.8) defines the behaviour to use on duplicate entries during the zunion.
 
 ###### *Return value*
 *ARRAY* The result of the union of sets.
@@ -3456,7 +3458,7 @@ The forth argument defines the `AGGREGATE` option which specify how the results 
 *keyOutput*
 *arrayZSetKeys*
 *arrayWeights*
-*aggregateFunction* Either "SUM", "MIN", or "MAX": defines the behaviour to use on duplicate entries during the zunionstore.
+*aggregateFunction* Either "SUM", "MIN", "MAX", or "COUNT" (Redis >= 8.8): defines the behaviour to use on duplicate entries during the zunionstore.
 
 ###### *Return value*
 *LONG* The number of values in the new sorted set.

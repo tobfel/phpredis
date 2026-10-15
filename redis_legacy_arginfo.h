@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: fbc9315c36f7f6c38d2d057338ea41ded89a1c6d */
+ * Stub hash: 2de44845003c74a5972aaf8c15e80820ebd5dcfd */
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_Redis___construct, 0, 0, 0)
 	ZEND_ARG_INFO(0, options)
@@ -1958,6 +1958,14 @@ static zend_class_entry *register_class_Redis(void)
 	zend_string *const_SERIALIZER_JSON_name = zend_string_init_interned("SERIALIZER_JSON", sizeof("SERIALIZER_JSON") - 1, 1);
 	zend_declare_class_constant_ex(class_entry, const_SERIALIZER_JSON_name, &const_SERIALIZER_JSON_value, ZEND_ACC_PUBLIC, NULL);
 	zend_string_release(const_SERIALIZER_JSON_name);
+#if defined(HAVE_REDIS_PHPSER)
+
+	zval const_SERIALIZER_PHPSER_value;
+	ZVAL_LONG(&const_SERIALIZER_PHPSER_value, REDIS_SERIALIZER_PHPSER);
+	zend_string *const_SERIALIZER_PHPSER_name = zend_string_init_interned("SERIALIZER_PHPSER", sizeof("SERIALIZER_PHPSER") - 1, 1);
+	zend_declare_class_constant_ex(class_entry, const_SERIALIZER_PHPSER_name, &const_SERIALIZER_PHPSER_value, ZEND_ACC_PUBLIC, NULL);
+	zend_string_release(const_SERIALIZER_PHPSER_name);
+#endif
 
 	zval const_COMPRESSION_NONE_value;
 	ZVAL_LONG(&const_COMPRESSION_NONE_value, REDIS_COMPRESSION_NONE);
