@@ -3689,6 +3689,50 @@ class Redis_Test extends TestSuite {
         }
     }
 
+    public function testHMGetNumericFieldIdentity() {
+        $key = 'hash:numeric-field-identity';
+        $hash = [
+            7 => 'seven', '+7' => 'plus-seven', '07' => 'zero-seven',
+            -7 => 'negative-seven', '-07' => 'negative-zero-seven',
+            0 => 'zero', '-0' => 'negative-zero', '00' => 'double-zero',
+            8 => 'eight', PHP_INT_MIN => 'min', PHP_INT_MAX => 'max',
+        ];
+
+        $this->assertIsInt($this->redis->del($key));
+        $this->assertTrue($this->redis->hMSet($key, $hash));
+
+        /* Fetch aliases separately so a rewritten field cannot hide behind
+         * another requested field. Canonical integer strings keep integer keys. */
+        foreach ($hash as $field => $value) {
+            $this->assertEquals([$field => $value],
+                $this->redis->hMGet($key, [(string)$field]));
+        }
+
+        $fields = array_map('strval', array_keys($hash));
+        $fields = array_merge($fields, ['+8', '08', '-00', 'missing', 7, '07']);
+        $expected = $hash + ['+8' => false, '08' => false, '-00' => false, 'missing' => false];
+
+        /* Distinct spellings must survive together, including when another
+         * spelling exists but the requested field does not. Duplicates collapse. */
+        $this->assertEquals($expected, $this->redis->hMGet($key, $fields));
+
+        $modes = [Redis::MULTI];
+        if ($this->havePipeline()) $modes[] = Redis::PIPELINE;
+
+        foreach ($modes as $mode) {
+            $this->redis->multi($mode)
+                ->hMGet($key, $fields)
+                ->hMGet($key, ['07', '+7', '-0', '7']);
+
+            $this->assertEquals([
+                $expected,
+                ['07' => 'zero-seven', '+7' => 'plus-seven', '-0' => 'negative-zero', 7 => 'seven'],
+            ], $this->redis->exec());
+        }
+
+        $this->assertEquals(1, $this->redis->del($key));
+    }
+
     public function testHRandField() {
         if (version_compare($this->version, '6.2.0') < 0)
             $this->MarkTestSkipped();
@@ -6834,9 +6878,38 @@ class Redis_Test extends TestSuite {
         $this->assertFalse($this->redis->setOption(Redis::OPT_BACKOFF_ALGORITHM, 55555));
 
         foreach ([Redis::OPT_BACKOFF_BASE, Redis::OPT_BACKOFF_CAP] as $option) {
-            foreach ([500, 750] as $value) {
-                $this->redis->setOption($option, $value);
+            $limit = intdiv(PHP_INT_MAX, 1000);
+            foreach ([0, 500, 750, $limit] as $value) {
+                $this->assertTrue($this->redis->setOption($option, $value));
                 $this->assertEquals($value, $this->redis->getOption($option));
+            }
+
+            foreach ([-1, $limit + 1, PHP_INT_MAX] as $value) {
+                $this->assertFalse($this->redis->setOption($option, $value));
+                $this->assertEquals($limit, $this->redis->getOption($option));
+            }
+
+            $this->redis->setOption($option, 750);
+        }
+    }
+
+    public function testBackoffConstructorOptions() {
+        $class = $this->getRedisClass();
+        $limit = intdiv(PHP_INT_MAX, 1000);
+
+        foreach (['base' => Redis::OPT_BACKOFF_BASE, 'cap' => Redis::OPT_BACKOFF_CAP] as $name => $option) {
+            foreach ([0, 750, $limit] as $value) {
+                $redis = new $class(['backoff' => [$name => $value]]);
+                $this->assertEquals($value, $redis->getOption($option));
+            }
+
+            foreach ([-1, $limit + 1, PHP_INT_MAX] as $value) {
+                $ex = null;
+                try {
+                    new $class(['backoff' => [$name => $value]]);
+                } catch (Exception | ValueError $ex) {
+                }
+                $this->assertTrue($ex !== null);
             }
         }
     }
