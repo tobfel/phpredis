@@ -587,7 +587,9 @@ redis_subscribe_response(INTERNAL_FUNCTION_PARAMETERS, RedisSock *redis_sock,
         }
 
         // We'll need to find the command response
-        if ((z_tmp = zend_hash_index_find(Z_ARRVAL(z_resp), 0)) == NULL) {
+        if ((z_tmp = zend_hash_index_find(Z_ARRVAL(z_resp), 0)) == NULL ||
+            Z_TYPE_P(z_tmp) != IS_STRING
+        ) {
             goto error;
         }
 
@@ -596,7 +598,9 @@ redis_subscribe_response(INTERNAL_FUNCTION_PARAMETERS, RedisSock *redis_sock,
             goto error;
         }
 
-        if ((z_tmp = zend_hash_index_find(Z_ARRVAL(z_resp), 1)) == NULL) {
+        if ((z_tmp = zend_hash_index_find(Z_ARRVAL(z_resp), 1)) == NULL ||
+            Z_TYPE_P(z_tmp) != IS_STRING
+        ) {
             goto error;
         }
 
@@ -746,7 +750,8 @@ PHP_REDIS_API int redis_unsubscribe_response(INTERNAL_FUNCTION_PARAMETERS,
     while (sctx->argc--) {
         ZVAL_NULL(&z_resp);
         if (!redis_sock_read_multibulk_reply_zval(redis_sock, &z_resp) ||
-            (z_chan = zend_hash_index_find(Z_ARRVAL(z_resp), 1)) == NULL
+            (z_chan = zend_hash_index_find(Z_ARRVAL(z_resp), 1)) == NULL ||
+            Z_TYPE_P(z_chan) != IS_STRING
         ) {
             zval_ptr_dtor_nogc(&z_resp);
             zval_ptr_dtor_nogc(&z_ret);
@@ -3314,7 +3319,7 @@ alloc_stream_context(const RedisSock *redis_sock) {
 /**
  * redis_sock_connect
  */
-PHP_REDIS_API int redis_sock_connect(RedisSock *redis_sock)
+static int redis_sock_connect_impl(RedisSock *redis_sock, zend_bool fresh)
 {
     struct timeval tv, read_tv, *tv_ptr = NULL;
     zend_string *persistent_id = NULL, *estr = NULL;
@@ -3360,7 +3365,7 @@ PHP_REDIS_API int redis_sock_connect(RedisSock *redis_sock)
     if (redis_sock->persistent) {
         if (zend_ini_long_literal("redis.pconnect.pooling_enabled")) {
             p = redis_sock_get_connection_pool(redis_sock);
-            if (zend_llist_count(&p->list) > 0) {
+            if (!fresh && zend_llist_count(&p->list) > 0) {
                 redis_sock->stream = *(php_stream **)zend_llist_get_last(&p->list);
                 zend_llist_remove_tail(&p->list);
 
@@ -3451,6 +3456,34 @@ PHP_REDIS_API int redis_sock_connect(RedisSock *redis_sock)
     redis_sock->status = REDIS_SOCK_STATUS_CONNECTED;
 
     return SUCCESS;
+}
+
+PHP_REDIS_API int redis_sock_connect(RedisSock *redis_sock)
+{
+    return redis_sock_connect_impl(redis_sock, 0);
+}
+
+PHP_REDIS_API int redis_sock_reconnect(RedisSock *redis_sock)
+{
+    int ret, max_retries = redis_sock->max_retries;
+
+    redis_sock_disconnect(redis_sock, 1, 1);
+    redis_free_reply_callbacks(redis_sock);
+    smart_string_free(&redis_sock->pipeline_cmd);
+    redis_sock_clear_err(redis_sock);
+
+    /* Handshake retries must not silently borrow a pooled connection. */
+    redis_sock->max_retries = 0;
+    ret = redis_sock_connect_impl(redis_sock, 1);
+    if (ret == SUCCESS)
+        ret = redis_sock_server_open(redis_sock);
+    redis_sock->max_retries = max_retries;
+
+    if (ret != SUCCESS) {
+        redis_sock_disconnect(redis_sock, 1, 1);
+        redis_sock->status = REDIS_SOCK_STATUS_FAILED;
+    }
+    return ret;
 }
 
 /**
@@ -5093,9 +5126,7 @@ void redisSetScanCursor(zval *zv, uint64_t cursor) {
 /* Get a Redis SCAN cursor value out of a zval.  These are always taken as a
  * reference argument that that must be `null`, `int`, or `string`.  */
 uint64_t redisGetScanCursor(zval *zv, zend_bool *was_zero) {
-    ZEND_ASSERT(zv != NULL && (Z_TYPE_P(zv) == IS_LONG ||
-                               Z_TYPE_P(zv) == IS_STRING ||
-                               Z_TYPE_P(zv) == IS_NULL));
+    ZEND_ASSERT(zv != NULL);
 
     if (Z_TYPE_P(zv) == IS_NULL) {
         convert_to_long(zv);
@@ -5104,10 +5135,14 @@ uint64_t redisGetScanCursor(zval *zv, zend_bool *was_zero) {
     } else if (Z_TYPE_P(zv) == IS_STRING) {
         *was_zero = Z_STRLEN_P(zv) == 1 && Z_STRVAL_P(zv)[0] == '0';
         return strtoull(Z_STRVAL_P(zv), NULL, 10);
-    } else {
+    } else if (Z_TYPE_P(zv) == IS_LONG) {
         *was_zero = Z_LVAL_P(zv) == 0;
         return Z_LVAL_P(zv);
     }
+
+    zend_type_error("Scan cursor must be of type int|string|null, %s given", zend_zval_type_name(zv));
+    *was_zero = 0;
+    return 0;
 }
 
 /* vim: set tabstop=4 softtabstop=4 expandtab shiftwidth=4: */

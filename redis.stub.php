@@ -623,7 +623,7 @@ class Redis {
      * $redis = new Redis(['host' => '127.0.0.1', 'port' => 6380]);
      *
      */
-    public function __construct(?array $options = null);
+    public function __construct(#[\SensitiveParameter] ?array $options = null);
 
     /**
      * Destructor to clean up the Redis object.
@@ -1106,6 +1106,14 @@ class Redis {
     public function close(): bool;
 
     /**
+     * Closes and reopens the connection, restoring authentication and the selected database.
+     * Pending transactions and pipelines are discarded. Client options are preserved.
+     *
+     * @throws RedisException if never connected, explicitly closed, or reconnection fails.
+     */
+    public function reconnect(): bool;
+
+    /**
      * Execute Redis COMMAND subcommands.
      *
      * @see https://redis.io/docs/latest/commands/command/
@@ -1168,7 +1176,7 @@ class Redis {
      * }
      */
     public function connect(string $host, int $port = 6379, float $timeout = 0, ?string $persistent_id = null,
-                            int $retry_interval = 0, float $read_timeout = 0, ?array $context = null): bool;
+                            int $retry_interval = 0, float $read_timeout = 0, #[\SensitiveParameter] ?array $context = null): bool;
 
     /**
      * Make a copy of a key.
@@ -3209,7 +3217,7 @@ class Redis {
      * $redis->open('127.0.0.1', 6379);
      *
      */
-    public function open(string $host, int $port = 6379, float $timeout = 0, ?string $persistent_id = null, int $retry_interval = 0, float $read_timeout = 0, ?array $context = null): bool;
+    public function open(string $host, int $port = 6379, float $timeout = 0, ?string $persistent_id = null, int $retry_interval = 0, float $read_timeout = 0, #[\SensitiveParameter] ?array $context = null): bool;
 
     /**
      * Connects to a Redis server creating or reusing a persistent connection.
@@ -3234,7 +3242,7 @@ class Redis {
      *    echo "Could not connect to Redis: ", $ex->getMessage(), "\n";
      * }
      */
-    public function pconnect(string $host, int $port = 6379, float $timeout = 0, ?string $persistent_id = null, int $retry_interval = 0, float $read_timeout = 0, ?array $context = null): bool;
+    public function pconnect(string $host, int $port = 6379, float $timeout = 0, ?string $persistent_id = null, int $retry_interval = 0, float $read_timeout = 0, #[\SensitiveParameter] ?array $context = null): bool;
 
     /**
      * Remove the expiration from a key.
@@ -3382,7 +3390,7 @@ class Redis {
      * $redis->popen('127.0.0.1', 6379, 0.0, 'cache');
      *
      */
-    public function popen(string $host, int $port = 6379, float $timeout = 0, ?string $persistent_id = null, int $retry_interval = 0, float $read_timeout = 0, ?array $context = null): bool;
+    public function popen(string $host, int $port = 6379, float $timeout = 0, ?string $persistent_id = null, int $retry_interval = 0, float $read_timeout = 0, #[\SensitiveParameter] ?array $context = null): bool;
 
     /**
      * Set a key with an expiration time in milliseconds.

@@ -305,7 +305,7 @@ static void redis_cluster_load(redisCluster *c, const char *name, int name_len) 
     if ((iptr = zend_ini_string_literal("redis.clusters.seeds")) != NULL) {
         sapi_module.treat_data(PARSE_STRING, estrdup(iptr), &z_seeds);
     }
-    if ((z_value = zend_hash_str_find(Z_ARRVAL(z_seeds), name, name_len)) != NULL) {
+    if ((z_value = redis_hash_str_find_type(Z_ARRVAL(z_seeds), name, name_len, IS_ARRAY)) != NULL) {
         ht_seeds = Z_ARRVAL_P(z_value);
     } else {
         zval_ptr_dtor_nogc(&z_seeds);
@@ -404,6 +404,22 @@ PHP_METHOD(RedisCluster, __construct) {
 PHP_METHOD(RedisCluster, close) {
     cluster_disconnect(GET_CONTEXT(), 1);
     RETURN_TRUE;
+}
+
+/* {{{ proto bool RedisCluster::reconnect() */
+PHP_METHOD(RedisCluster, reconnect) {
+    redisCluster *c = GET_CONTEXT();
+
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    if (zend_hash_num_elements(c->nodes) == 0) {
+        CLUSTER_THROW_EXCEPTION("Not connected", 0);
+        RETURN_FALSE;
+    }
+
+    cluster_free_queue(c);
+    cluster_reset_multi(c);
+    RETURN_BOOL(cluster_reconnect(c) == SUCCESS);
 }
 
 /* {{{ proto string RedisCluster::get(string key) */
@@ -2571,7 +2587,7 @@ static void cluster_kscan_cmd(INTERNAL_FUNCTION_PARAMETERS,
 
     /* Get our scan cursor and return early if we're done */
     cursor = redisGetScanCursor(z_it, &completed);
-    if (completed)
+    if (EG(exception) || completed)
         RETURN_FALSE;
 
     if (c->flags->scan & REDIS_SCAN_PREFIX) {
@@ -2733,7 +2749,7 @@ PHP_METHOD(RedisCluster, scan) {
 
     /* Get the scan cursor and return early if we're done */
     cursor = redisGetScanCursor(zcursor, &completed);
-    if (completed)
+    if (EG(exception) || completed)
         RETURN_FALSE;
 
     if (c->flags->scan & REDIS_SCAN_PREFIX) {

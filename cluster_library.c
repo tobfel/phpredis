@@ -1351,6 +1351,47 @@ PHP_REDIS_API void cluster_disconnect(redisCluster *c, int force) {
     } ZEND_HASH_FOREACH_END();
 }
 
+PHP_REDIS_API int cluster_reconnect(redisCluster *c) {
+    const redisClusterNode *node, *slave;
+    RedisSock **socks;
+    size_t count = 0, capacity = zend_hash_num_elements(c->nodes);
+    int ret = SUCCESS;
+
+    ZEND_HASH_FOREACH_PTR(c->nodes, node) {
+        if (node && node->slaves)
+            capacity += zend_hash_num_elements(node->slaves);
+    } ZEND_HASH_FOREACH_END();
+    socks = safe_emalloc(capacity, sizeof(*socks), 0);
+
+    ZEND_HASH_FOREACH_PTR(c->nodes, node) {
+        if (node == NULL) continue;
+        socks[count++] = node->sock;
+        if (node->slaves) {
+            ZEND_HASH_FOREACH_PTR(node->slaves, slave) {
+                if (slave->sock->stream)
+                    socks[count++] = slave->sock;
+            } ZEND_HASH_FOREACH_END();
+        }
+    } ZEND_HASH_FOREACH_END();
+
+    /* Close every old connection before opening any replacement. */
+    cluster_disconnect(c, 1);
+    cluster_clear_error(c);
+    for (size_t i = 0; i < count; i++) {
+        if (redis_sock_reconnect(socks[i]) != SUCCESS) {
+            if (!EG(exception)) {
+                CLUSTER_THROW_EXCEPTION(socks[i]->err ? ZSTR_VAL(socks[i]->err) :
+                                        "Failed to reconnect", 0);
+            }
+            cluster_disconnect(c, 1);
+            ret = FAILURE;
+            break;
+        }
+    }
+    efree(socks);
+    return ret;
+}
+
 /* This method attempts to write our command at random to the master and any
  * attached slaves, until we either successufly do so, or fail. */
 static int cluster_dist_write(redisCluster *c, const char *cmd, size_t sz,
@@ -2130,6 +2171,7 @@ PHP_REDIS_API void cluster_sub_resp(INTERNAL_FUNCTION_PARAMETERS, redisCluster *
         }
 
         if ((z_tmp = zend_hash_index_find(Z_ARRVAL(z_tab), 0)) == NULL ||
+            Z_TYPE_P(z_tmp) != IS_STRING ||
             strcasecmp(Z_STRVAL_P(z_tmp), sctx->kw) != 0
         ) {
             zval_ptr_dtor_nogc(&z_tab);
@@ -2156,7 +2198,8 @@ PHP_REDIS_API void cluster_sub_resp(INTERNAL_FUNCTION_PARAMETERS, redisCluster *
 
         // Get the next subscribe response
         if (!cluster_zval_mbulk_resp(INTERNAL_FUNCTION_PARAM_PASSTHRU, c, 1, mbulk_resp_loop, &z_tab) ||
-            (z_type = zend_hash_index_find(Z_ARRVAL(z_tab), 0)) == NULL
+            (z_type = zend_hash_index_find(Z_ARRVAL(z_tab), 0)) == NULL ||
+            Z_TYPE_P(z_type) != IS_STRING
         ) {
             break;
         }
@@ -2236,7 +2279,8 @@ cluster_unsub_resp(INTERNAL_FUNCTION_PARAMETERS, redisCluster *c,
         // Fail if we didn't get an array or can't find index 1
         if (!cluster_zval_mbulk_resp(INTERNAL_FUNCTION_PARAM_PASSTHRU, c, pull,
                                      mbulk_resp_loop_raw, &z_tab) ||
-            (z_chan = zend_hash_index_find(Z_ARRVAL(z_tab), 1)) == NULL
+            (z_chan = zend_hash_index_find(Z_ARRVAL(z_tab), 1)) == NULL ||
+            Z_TYPE_P(z_chan) != IS_STRING
         ) {
             zval_ptr_dtor_nogc(&z_tab);
             zval_ptr_dtor_nogc(return_value);
@@ -2245,6 +2289,7 @@ cluster_unsub_resp(INTERNAL_FUNCTION_PARAMETERS, redisCluster *c,
 
         // Find the flag for this channel/pattern
         if ((z_flag = zend_hash_index_find(Z_ARRVAL(z_tab), 2)) == NULL ||
+            Z_TYPE_P(z_flag) != IS_STRING ||
             Z_STRLEN_P(z_flag) != 2
         ) {
             zval_ptr_dtor_nogc(&z_tab);

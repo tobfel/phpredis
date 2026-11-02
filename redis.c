@@ -801,6 +801,28 @@ PHP_METHOD(Redis, close)
     RETURN_FALSE;
 }
 
+PHP_METHOD(Redis, reconnect)
+{
+    RedisSock *redis_sock;
+
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    redis_sock = redis_sock_get_instance(getThis(), 1);
+    if (redis_sock == NULL || redis_sock->status == REDIS_SOCK_STATUS_DISCONNECTED) {
+        REDIS_THROW_EXCEPTION("Not connected", 0);
+        RETURN_FALSE;
+    }
+
+    if (redis_sock_reconnect(redis_sock) != SUCCESS) {
+        if (!EG(exception)) {
+            REDIS_THROW_EXCEPTION(redis_sock->err ? ZSTR_VAL(redis_sock->err) :
+                                  "Failed to reconnect", 0);
+        }
+        RETURN_FALSE;
+    }
+    RETURN_TRUE;
+}
+
 PHP_METHOD(Redis, reset)
 {
     char *response;
@@ -1362,8 +1384,8 @@ PHP_METHOD(Redis, getLastError) {
     RedisSock *redis_sock;
 
     // Grab socket
-    if ((redis_sock = redis_sock_get_instance(getThis(), 0)) == NULL) {
-        RETURN_FALSE;
+    if ((redis_sock = redis_sock_get_instance(getThis(), 1)) == NULL) {
+        RETURN_NULL();
     }
 
     /* Return our last error or NULL if we don't have one */
@@ -1377,8 +1399,8 @@ PHP_METHOD(Redis, clearLastError) {
     RedisSock *redis_sock;
 
     // Grab socket
-    if ((redis_sock = redis_sock_get_instance(getThis(), 0)) == NULL) {
-        RETURN_FALSE;
+    if ((redis_sock = redis_sock_get_instance(getThis(), 1)) == NULL) {
+        RETURN_TRUE;
     }
 
     redis_sock_clear_err(redis_sock);
@@ -1637,7 +1659,7 @@ generic_scan_cmd(INTERNAL_FUNCTION_PARAMETERS, REDIS_SCAN_TYPE type) {
 
     /* Get our SCAN cursor short circuiting if we're done */
     cursor = redisGetScanCursor(z_cursor, &completed);
-    if (completed)
+    if (EG(exception) || completed)
         RETURN_FALSE;
 
     if(key)
@@ -1669,7 +1691,8 @@ generic_scan_cmd(INTERNAL_FUNCTION_PARAMETERS, REDIS_SCAN_TYPE type) {
 
         if (redis_process_request(redis_sock, cmd) != SUCCESS ||
             redis_sock_read_scan_reply(INTERNAL_FUNCTION_PARAM_PASSTHRU,
-                                      redis_sock, type, &cursor) < 0)
+                                      redis_sock, type, &cursor) < 0 ||
+            Z_TYPE_P(return_value) != IS_ARRAY)
         {
             if (key)
                 zend_string_release(key);
